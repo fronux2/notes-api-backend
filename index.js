@@ -1,79 +1,94 @@
+require('dotenv').config()
+require('./mongodb')
+
 const express = require('express')
 const cors = require('cors')
+const Sentry = require('@sentry/node');
+const Tracing = require("@sentry/tracing");
 const app = express()
-app.use(express.json())
+
 app.use(cors())
+app.use(express.json())
+const notFound = require('./middleware/notFound')
+const Note = require('./models/Note')
+const handleError = require('./middleware/handleError')
 
-let notes = [
-  {
-    id: 1,
-    content: 'Me tengo que susbribir a midudev',
-    date: '2019-05-30T18:39:34.091Z',
-    important: false
-  },
-  {
-    id: 2,
-    content: 'Me tengo que susbribir a fronux',
-    date: '2019-05-30T18:39:34.091Z',
-    important: true
-  }
-]
+Sentry.init({
+  dsn: "https://44aef8b38ff546429b72f2492cec9ad3@o1230978.ingest.sentry.io/6378071",
+  integrations: [
+    // enable HTTP calls tracing
+    new Sentry.Integrations.Http({ tracing: true }),
+    // enable Express.js middleware tracing
+    new Tracing.Integrations.Express({ app }),
+  ],
 
-app.get('/', (request, response) => {
+  // Set tracesSampleRate to 1.0 to capture 100%
+  // of transactions for performance monitoring.
+  // We recommend adjusting this value in production
+  tracesSampleRate: 1.0,
+});
+
+app.use(Sentry.Handlers.requestHandler());
+// TracingHandler creates a trace for every incoming request
+app.use(Sentry.Handlers.tracingHandler());
+
+app.get('/',(request, response, next) => {
   response.send('<h1>Hola mundo</h1>')
 })
 
-app.get('/api/notes', (request, response) => {
-  response.json(notes)
+app.get('/api/notes',(request, response, next) => {
+  Note.find({})
+  .then(res => response.status(200).json(res))
+  .catch(next)
 })
 
-app.get('/api/notes/:id', (request, response) => {
-  const id = Number(request.params.id)
-  const note = notes.find(note => note.id === id)
-  response.json(note)
+app.get('/api/notes/:id',(request, response, next) => {
+  const { id } = request.params
+  Note.findById(id).then(res => response.status(200).json(res))
+  .catch(next)
 })
 
-app.delete('/api/notes/:id', (request, response) => {
-  const id = Number(request.params.id)
-  notes = notes.filter(note => note.id !== id)
-  response.status(204).end()
+app.get('/api/notes/:id',(request, response, next) => {
+  const { id } = request.params
+  Note.findById(id).then(res => response.status(200).json(res))
+  .catch(next)
 })
 
-app.post('/api/notes', (request, response) => {
+app.post('/api/notes',(request, response, next) => {
+  const { id } = request.params
   const note = request.body
-  const ids = notes.map(notes => notes.id)
-  const maxId = Math.max(...ids)
-  const newNote = {
-    id: maxId + 1,
+  const newNote = new Note({
     content: note.content,
-    date: new Date().toISOString(),
-    important: typeof note.content !== 'undefined' ? note.content : false
-  }
-
-  notes = [...notes, newNote]
-  response.json(newNote)
-})
-
-app.put('/api/notes/:id', (request, response) => {
-  const note = request.body
-  const id = request.params
-  const ids = notes.map(notes => notes.id)
-  note = ids === id ? note.content : null
-  const newNote = {
-    content: note.content,
-    important: typeof note.content !== 'undefined' ? note.content : false
-  }
-
-  notes = [...notes, newNote]
-  response.json(newNote)
-})
-
-app.use((request, response) => {
-  response.status(404).json({
-    error: 'not found'
+    date: new Date(),
+    important: note.important
   })
+  newNote.save().then(res => response.status(201).json(res))
+  .catch(next)
 })
 
-const PORT = process.env.PORT || 3001
+app.put('/api/notes/:id',(request, response, next) => {
+  const { id } = request.params
+  const note = request.body
+  const newNoteInfo = {
+    content: note.content,    
+    important: note.important
+  }
+  Note.findByIdAndUpdate(id, newNoteInfo, {new: true})
+  .then(res => response.status(200).json(res))
+  .catch(next)
+})
 
+app.delete('/api/notes/:id',(request, response, next) => {
+  const { id } = request.params
+  Note.findByIdAndDelete(id)
+  .then(res => response.status(204).json(res))
+  .catch(next)
+})
+
+
+app.use(notFound)
+app.use(Sentry.Handlers.errorHandler());
+app.use(handleError)
+
+const PORT = process.env.PORT
 app.listen(PORT)
